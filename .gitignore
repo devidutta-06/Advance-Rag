@@ -1,0 +1,11 @@
+storage/
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+
+uv.lock
+.python-version
+project.toml

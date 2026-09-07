@@ -1,0 +1,20 @@
+[project]
+name = "advanced-rag"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "chromadb>=0.5.0",
+    "numpy>=1.26,<2.0",
+    "ollama>=0.3.0",
+    "pypdf>=4.0.0",
+    "sentence-transformers>=3.0.0",
+]
+
+[project.scripts]
+advanced-rag = "advanced_rag:main"
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"
