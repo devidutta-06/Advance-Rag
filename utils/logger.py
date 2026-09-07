@@ -18,11 +18,54 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import sys
 
 from config import config
 
 _CONFIGURED = False
+
+# Patterns whose matches on stderr are silently dropped. Some libraries
+# (notably `huggingface_hub`) print one-off messages directly to stderr
+# instead of going through `logging`, so we have to filter them here.
+_STDERR_FILTERS = (
+    re.compile(r"unauthenticated requests to the HF Hub"),
+    re.compile(r"Please set a HF_TOKEN to enable higher rate limits"),
+)
+
+
+class _FilteredStderr:
+    """Wraps `sys.stderr` and drops lines matching the noisiest
+    third-party deprecation / auth warnings. Other writes pass through
+    unchanged so real errors still surface."""
+
+    def __init__(self, real) -> None:
+        self._real = real
+
+    def write(self, msg: str) -> int:
+        if not msg:
+            return 0
+        if any(p.search(msg) for p in _STDERR_FILTERS):
+            return len(msg)
+        return self._real.write(msg)
+
+    def flush(self) -> None:
+        if hasattr(self._real, "flush"):
+            self._real.flush()
+
+    def isatty(self) -> bool:
+        return getattr(self._real, "isatty", lambda: False)()
+
+    def fileno(self) -> int:
+        return self._real.fileno()
+
+
+def _install_stderr_filter() -> None:
+    """Install the stderr filter exactly once."""
+    if getattr(sys.stderr, "_advanced_rag_filtered", False):
+        return
+    sys.stderr = _FilteredStderr(sys.stderr)
+    sys.stderr._advanced_rag_filtered = True  # type: ignore[attr-defined]
 
 # Loggers that should never reach the console regardless of verbosity.
 # These are libraries whose DEBUG/INFO chatter (HTTP request lines, telemetry
@@ -38,6 +81,7 @@ _QUIET_LOGGERS = (
     "sentence_transformers",
     "transformers",
     "huggingface_hub",
+    "huggingface_hub.utils._http",
     "filelock",
     "asyncio",
 )
@@ -48,6 +92,10 @@ def setup_logging(log_level: str | None = None, quiet: bool = False) -> None:
     global _CONFIGURED
     if _CONFIGURED:
         return
+
+    # Always filter known-noisy stderr lines (HF Hub auth warnings,
+    # etc.) regardless of verbosity.
+    _install_stderr_filter()
 
     level_name = (log_level or config.LOG_LEVEL or "INFO").upper()
     level = getattr(logging, level_name, logging.INFO)
@@ -99,6 +147,18 @@ def setup_logging(log_level: str | None = None, quiet: bool = False) -> None:
         # Disable propagation of their own loggers so even if a child logs
         # something, it stays at WARNING.
         logging.getLogger(noisy).propagate = True  # still let our handlers filter
+
+    # The HF Hub "unauthenticated requests" warning is a one-shot
+    # informational notice (not a real problem on local-only setups).
+    # It logs at WARNING, so our _QUIET_LOGGERS rule isn't enough; we
+    # also have to filter the message itself.
+    class _HFHubFilter(logging.Filter):
+        def filter(self, record: logging.LogRecord) -> bool:
+            msg = record.getMessage()
+            return "unauthenticated" not in msg and "HF_TOKEN" not in msg
+
+    for noisy in ("huggingface_hub", "huggingface_hub.utils._http"):
+        logging.getLogger(noisy).addFilter(_HFHubFilter())
 
     _CONFIGURED = True
 

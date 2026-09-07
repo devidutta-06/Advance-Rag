@@ -1,9 +1,11 @@
 """
 Sparse retrieval via SQLite/FTS5 (SRS Section 13 - Sparse Retrieval).
 
-Provides local keyword-based (BM25-ranked) retrieval, complementary to
-ChromaDB's dense semantic retrieval, without introducing another external
-database service.
+LangChain has no native FTS5 retriever, so this module exposes a custom
+`BaseRetriever` subclass (`FTS5Retriever`) that delegates to the
+BM25-ranked FTS5 index. The legacy function-style API
+(`sparse_search`, `index_chunks`, `clear_sparse_index`) is kept for
+backwards compatibility with the rest of the pipeline.
 """
 
 from __future__ import annotations
@@ -13,6 +15,11 @@ import re
 import sqlite3
 from dataclasses import dataclass
 from typing import Dict, List, Optional
+
+from langchain_core.callbacks import CallbackManagerForRetrieverRun
+from langchain_core.documents import Document
+from langchain_core.retrievers import BaseRetriever
+from pydantic import Field
 
 from config import config
 from ingestion.metadata import Chunk
@@ -106,7 +113,8 @@ class SparseResult:
 
 
 def sparse_search(query: str, top_k: Optional[int] = None) -> List[SparseResult]:
-    top_k = top_k or config.SPARSE_TOP_K
+    """Legacy function-style API. Returns `SparseResult` records."""
+    k = top_k or config.SPARSE_TOP_K
     conn = _get_connection()
 
     total = conn.execute("SELECT COUNT(*) AS n FROM sparse_index;").fetchone()["n"]
@@ -127,7 +135,7 @@ def sparse_search(query: str, top_k: Optional[int] = None) -> List[SparseResult]
             ORDER BY score
             LIMIT ?
             """,
-            (fts_query, top_k),
+            (fts_query, k),
         ).fetchall()
     except sqlite3.OperationalError as exc:
         logger.warning("Sparse query failed (%s); returning no sparse results", exc)
@@ -150,3 +158,36 @@ def sparse_search(query: str, top_k: Optional[int] = None) -> List[SparseResult]
     ]
     logger.info("Number of sparse results: %d", len(results))
     return results
+
+
+class FTS5Retriever(BaseRetriever):
+    """LangChain-compatible retriever backed by our SQLite/FTS5 index.
+
+    Use as:
+        retriever = FTS5Retriever(top_k=config.SPARSE_TOP_K)
+        docs = retriever.invoke("user question")
+    """
+
+    top_k: int = Field(default=8)
+
+    def _get_relevant_documents(
+        self,
+        query: str,
+        *,
+        run_manager: CallbackManagerForRetrieverRun,
+    ) -> List[Document]:
+        # Ensure schema exists for the first call.
+        _ = _get_connection()
+        results = sparse_search(query, top_k=self.top_k)
+        return [
+            Document(
+                page_content=r.text,
+                metadata={**r.metadata, "bm25_score": r.score, "rank": r.rank},
+            )
+            for r in results
+        ]
+
+
+def get_sparse_retriever(top_k: Optional[int] = None) -> FTS5Retriever:
+    """Return a LangChain `BaseRetriever` for the FTS5 index."""
+    return FTS5Retriever(top_k=top_k or config.SPARSE_TOP_K)

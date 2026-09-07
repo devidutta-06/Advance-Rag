@@ -1,9 +1,14 @@
 """
-Reciprocal Rank Fusion (SRS Section 16 - Reciprocal Rank Fusion).
+Hybrid retrieval + Reciprocal Rank Fusion (SRS Section 14-16).
 
-Combines dense and sparse retrieval rankings into a single unified ranking,
-preserving chunk_id, dense rank, sparse rank, fusion score, and source
-retrieval method for downstream MMR selection and debug logging.
+Combines dense and sparse retrieval rankings into a single unified
+ranking, preserving chunk_id, dense rank, sparse rank, fusion score, and
+source retrieval method for downstream MMR selection and debug logging.
+
+The LangChain `EnsembleRetriever` (from `langchain.retrievers`) implements
+RRF over multiple retrievers. We use it for the LCEL-style flow and also
+expose the original function-style API (`reciprocal_rank_fusion`) for
+backwards compatibility with the existing call sites.
 """
 
 from __future__ import annotations
@@ -11,9 +16,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
+from langchain_core.documents import Document
+from langchain_core.retrievers import BaseRetriever
+
 from config import config
-from retrieval.dense import DenseResult
-from retrieval.sparse import SparseResult
+from retrieval.dense import DenseResult, get_retriever
+from retrieval.sparse import SparseResult, get_sparse_retriever
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -78,3 +86,23 @@ def reciprocal_rank_fusion(
 
     logger.info("Number of combined candidates: %d", len(fused))
     return fused
+
+
+def get_hybrid_retriever(
+    top_k_dense: Optional[int] = None,
+    top_k_sparse: Optional[int] = None,
+) -> BaseRetriever:
+    """Return a LangChain `EnsembleRetriever` that performs RRF over
+    the dense (Chroma) and sparse (FTS5) retrievers.
+
+    The ensemble uses `RRF_K` as the RRF constant and the per-retriever
+    `top_k` values from `config` (or the explicit overrides)."""
+    from langchain_classic.retrievers import EnsembleRetriever
+
+    dense_retriever = get_retriever(top_k=top_k_dense)
+    sparse_retriever = get_sparse_retriever(top_k=top_k_sparse)
+    return EnsembleRetriever(
+        retrievers=[dense_retriever, sparse_retriever],
+        weights=[1.0, 1.0],
+        c=config.RRF_K,
+    )

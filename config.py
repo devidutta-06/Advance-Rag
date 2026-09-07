@@ -40,8 +40,8 @@ class Config:
     # --- Storage paths ---
     BASE_DATA_DIR: str = field(default_factory=lambda: _env_str("BASE_DATA_DIR", "data"))
     CHROMA_PATH: str = field(default_factory=lambda: _env_str("CHROMA_PATH", "storage/chroma"))
+    CACHE_PATH: str = field(default_factory=lambda: _env_str("CACHE_PATH", "storage/cache"))
     SQLITE_PATH: str = field(default_factory=lambda: _env_str("SQLITE_PATH", "storage/rag.db"))
-    CACHE_PATH: str = field(default_factory=lambda: _env_str("CACHE_PATH", "storage/chroma"))
 
     # --- Chroma collection names ---
     DOCUMENT_COLLECTION: str = field(default_factory=lambda: _env_str("DOCUMENT_COLLECTION", "document_chunks"))
@@ -55,7 +55,6 @@ class Config:
         default_factory=lambda: _env_float("SEMANTIC_CHUNK_BREAKPOINT_PERCENTILE", 85.0)
     )
     MIN_CHUNK_SENTENCES: int = field(default_factory=lambda: _env_int("MIN_CHUNK_SENTENCES", 1))
-    MAX_CHUNK_CHARS: int = field(default_factory=lambda: _env_int("MAX_CHUNK_CHARS", 1800))
 
     # --- Retrieval ---
     DENSE_TOP_K: int = field(default_factory=lambda: _env_int("DENSE_TOP_K", 8))

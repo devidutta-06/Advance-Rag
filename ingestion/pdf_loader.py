@@ -1,9 +1,10 @@
 """
 PDF text extraction (SRS Section 9 - PDF Processing).
 
-Extracts text page-by-page so page numbers can be preserved and later
-associated with chunk metadata. Uses pypdf, which is lightweight, pure
-Python, and compatible with LangChain-style document loading.
+Uses LangChain's `PyPDFLoader` to load a PDF into a list of
+`langchain_core.documents.Document` objects, one per page. Each Document
+preserves the page number via `metadata["page"]` (0-indexed) so it can
+be carried through chunking and retrieval.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ import os
 from dataclasses import dataclass
 from typing import List
 
+from langchain_core.documents import Document
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -23,12 +25,22 @@ class PDFLoadError(Exception):
 
 @dataclass
 class PageText:
+    """Lightweight per-page view used by the chunker."""
     page_number: int  # 1-indexed
     text: str
 
 
+def _to_page_text(documents: list[Document]) -> List[PageText]:
+    """Convert LangChain Documents (one per page) into PageText records
+    with 1-indexed page numbers."""
+    pages: List[PageText] = []
+    for i, doc in enumerate(documents, start=1):
+        pages.append(PageText(page_number=i, text=(doc.page_content or "").strip()))
+    return pages
+
+
 def load_pdf_pages(pdf_path: str) -> List[PageText]:
-    """Load a PDF and return per-page extracted text.
+    """Load a PDF via `PyPDFLoader` and return per-page text.
 
     Raises PDFLoadError for missing files, invalid PDFs, or PDFs with no
     extractable text (SRS Section 31 - Error Handling).
@@ -39,33 +51,29 @@ def load_pdf_pages(pdf_path: str) -> List[PageText]:
         raise PDFLoadError(f"PDF not found: {pdf_path}")
 
     if not pdf_path.lower().endswith(".pdf"):
-        raise PDFLoadError(f"Unsupported file type (only .pdf is supported in Version 1): {pdf_path}")
+        raise PDFLoadError(
+            f"Unsupported file type (only .pdf is supported in Version 1): {pdf_path}"
+        )
 
     try:
-        from pypdf import PdfReader
+        from langchain_community.document_loaders import PyPDFLoader
     except ImportError as exc:  # pragma: no cover
-        raise PDFLoadError("pypdf is not installed. Run: pip install pypdf") from exc
+        raise PDFLoadError(
+            "langchain-community is not installed. Run: pip install langchain-community"
+        ) from exc
 
+    logger.info("Text extraction started")
     try:
-        reader = PdfReader(pdf_path)
+        loader = PyPDFLoader(file_path=pdf_path)
+        documents = loader.load()
     except Exception as exc:
         raise PDFLoadError(f"Invalid or corrupted PDF: {pdf_path} ({exc})") from exc
 
-    num_pages = len(reader.pages)
-    logger.info("PDF pages detected: %d", num_pages)
-
-    if num_pages == 0:
+    if not documents:
         raise PDFLoadError(f"PDF has no pages: {pdf_path}")
 
-    logger.info("Text extraction started")
-    pages: List[PageText] = []
-    for i, page in enumerate(reader.pages, start=1):
-        try:
-            text = page.extract_text() or ""
-        except Exception as exc:
-            logger.warning("Failed to extract text from page %d: %s", i, exc)
-            text = ""
-        pages.append(PageText(page_number=i, text=text.strip()))
+    logger.info("PDF pages detected: %d", len(documents))
+    pages = _to_page_text(documents)
 
     total_chars = sum(len(p.text) for p in pages)
     if total_chars < 10:

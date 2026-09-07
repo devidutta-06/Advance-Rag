@@ -1,37 +1,61 @@
 """
-Dense retrieval via ChromaDB (SRS Section 12 - Dense Retrieval).
+Dense retrieval via langchain-chroma (SRS Section 12 - Dense Retrieval).
+
+Wraps ChromaDB in a `langchain_chroma.Chroma` vector store so we can use
+`as_retriever()` and the `max_marginal_relevance_search` helper from
+langchain-chroma for MMR. Embeddings are produced by the shared
+`HuggingFaceEmbeddings` instance (see `embeddings.model`).
 """
 
 from __future__ import annotations
 
 import os
+import shutil
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
+from langchain_chroma import Chroma
+from langchain_core.documents import Document
+
 from config import config
-from embeddings.model import embed_text, embed_texts
+from embeddings.model import get_embeddings
 from ingestion.metadata import Chunk
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-_client = None
+_vectorstore: Chroma | None = None
 
 
-def _get_client():
-    global _client
-    if _client is None:
-        import chromadb
-
+def _get_vectorstore() -> Chroma:
+    global _vectorstore
+    if _vectorstore is None:
         os.makedirs(config.CHROMA_PATH, exist_ok=True)
-        _client = chromadb.PersistentClient(path=config.CHROMA_PATH)
+        _vectorstore = Chroma(
+            collection_name=config.DOCUMENT_COLLECTION,
+            embedding_function=get_embeddings(),
+            persist_directory=config.CHROMA_PATH,
+        )
         logger.info("ChromaDB initialized at %s", config.CHROMA_PATH)
-    return _client
+    return _vectorstore
 
 
-def get_document_collection():
-    client = _get_client()
-    return client.get_or_create_collection(name=config.DOCUMENT_COLLECTION)
+def get_retriever(top_k: Optional[int] = None):
+    """Return a LangChain `VectorStoreRetriever` over the document
+    collection with `k = top_k` (default `config.DENSE_TOP_K`)."""
+    k = top_k or config.DENSE_TOP_K
+    return _get_vectorstore().as_retriever(search_kwargs={"k": k})
+
+
+def get_mmr_retriever(top_k: Optional[int] = None, fetch_k: int = 20, lambda_mult: Optional[float] = None):
+    """Return a retriever that uses `max_marginal_relevance_search`
+    (langchain-chroma) for MMR-aware selection."""
+    k = top_k or config.MMR_TOP_K
+    lam = lambda_mult if lambda_mult is not None else config.MMR_LAMBDA
+    return _get_vectorstore().as_retriever(
+        search_type="mmr",
+        search_kwargs={"k": k, "fetch_k": fetch_k, "lambda_mult": lam},
+    )
 
 
 @dataclass
@@ -48,52 +72,70 @@ def index_chunks(chunks: List[Chunk]) -> None:
         logger.warning("No chunks to index in ChromaDB")
         return
 
-    collection = get_document_collection()
     logger.info("Embedding generation started")
-    embeddings = embed_texts([c.text for c in chunks])
-    logger.info("Number of embeddings generated: %d", len(embeddings))
+    documents = [c.to_document() for c in chunks]
+    # Identifiers in ChromaDB must be string-compatible.
+    ids = [c.chunk_id for c in chunks]
 
-    collection.upsert(
-        ids=[c.chunk_id for c in chunks],
-        embeddings=embeddings,
-        documents=[c.text for c in chunks],
-        metadatas=[c.metadata for c in chunks],
-    )
+    _get_vectorstore().add_documents(documents=documents, ids=ids)
     logger.info("Documents indexed")
-    logger.info("Number of vectors stored: %d", collection.count())
+    logger.info(
+        "Number of vectors stored: %d", _get_vectorstore()._collection.count()
+    )
 
 
 def clear_document_collection() -> None:
-    client = _get_client()
-    try:
-        client.delete_collection(config.DOCUMENT_COLLECTION)
-    except Exception:
-        pass
+    """Drop the persistent collection directory and reset the cached
+    vectorstore. We can't selectively delete from a single collection in
+    a multi-tenant store, so clearing the directory is the cleanest reset
+    for a single-tenant setup."""
+    global _vectorstore
+    if _vectorstore is not None:
+        try:
+            _vectorstore.delete_collection()
+        except Exception:
+            pass
+        _vectorstore = None
+    # Belt-and-braces: also wipe the directory in case of stale on-disk state.
+    if os.path.isdir(config.CHROMA_PATH):
+        try:
+            shutil.rmtree(config.CHROMA_PATH, ignore_errors=True)
+        except Exception:
+            pass
 
 
 def dense_search(query: str, top_k: Optional[int] = None) -> List[DenseResult]:
-    top_k = top_k or config.DENSE_TOP_K
-    collection = get_document_collection()
-
-    if collection.count() == 0:
+    k = top_k or config.DENSE_TOP_K
+    vs = _get_vectorstore()
+    if vs._collection.count() == 0:
         logger.warning("Dense retrieval skipped: document collection is empty")
         return []
 
     logger.info("Dense retrieval started")
-    query_embedding = embed_text(query)
-    results = collection.query(
-        query_embeddings=[query_embedding],
-        n_results=min(top_k, collection.count()),
+    # Use `similarity_search_with_score` (returns cosine distance-like
+    # values). `similarity_search_with_relevance_scores` requires scores
+    # in [0, 1] and throws on negative values when embeddings are
+    # normalized, so it is not safe for our setup.
+    docs_and_scores = vs.similarity_search_with_score(
+        query, k=min(k, vs._collection.count())
     )
 
-    ids = results.get("ids", [[]])[0]
-    docs = results.get("documents", [[]])[0]
-    metas = results.get("metadatas", [[]])[0]
-    distances = results.get("distances", [[]])[0]
+    results: List[DenseResult] = []
+    for i, (doc, distance) in enumerate(docs_and_scores, start=1):
+        results.append(
+            DenseResult(
+                chunk_id=doc.metadata.get("chunk_id", f"unknown_{i}"),
+                text=doc.page_content,
+                metadata=doc.metadata,
+                distance=float(distance),
+                rank=i,
+            )
+        )
+    logger.info("Number of dense results: %d", len(results))
+    return results
 
-    dense_results = [
-        DenseResult(chunk_id=cid, text=doc, metadata=meta, distance=dist, rank=i + 1)
-        for i, (cid, doc, meta, dist) in enumerate(zip(ids, docs, metas, distances))
-    ]
-    logger.info("Number of dense results: %d", len(dense_results))
-    return dense_results
+
+def get_vectorstore() -> Chroma:
+    """Public accessor for callers that need the underlying langchain-chroma
+    vector store (e.g. MMR, raw similarity search)."""
+    return _get_vectorstore()

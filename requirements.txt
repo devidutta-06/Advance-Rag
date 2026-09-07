@@ -1,18 +1,28 @@
 # Core
 numpy>=1.26,<2.0
 
-# Embeddings
+# LangChain framework (LCEL-based pipeline)
+langchain>=1.0.0
+langchain-core>=1.0.0
+langchain-community>=0.4.0
+langchain-text-splitters>=1.0.0
+langchain-huggingface>=1.2.2
+langchain-ollama>=1.1.0
+langchain-chroma>=1.1.0
+langchain-experimental>=0.4.2   # SemanticChunker
+langchain-classic>=1.0.0         # EnsembleRetriever
+
+# Embeddings (used internally by langchain-huggingface)
 sentence-transformers>=3.0.0
 
 # Vector database (dense retrieval + semantic cache)
 chromadb>=0.5.0
 
-# PDF text extraction
+# PDF text extraction (used by langchain PyPDFLoader)
 pypdf>=4.0.0
 
-# Local LLM runtime client (query rewriting + answer generation)
+# Local LLM runtime (used internally by langchain-ollama)
 ollama>=0.3.0
 
-# Optional: only needed if you swap in LangChain-based loaders/splitters
-# langchain>=0.2.0
-# langchain-community>=0.2.0
+# Optional: pretty-print the LCEL graph via `chain.get_graph().print_ascii()`
+# grandalf>=0.8

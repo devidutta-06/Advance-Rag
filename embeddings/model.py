@@ -1,41 +1,41 @@
 """
-Shared embedding model singleton (SRS Section 8 - Embedding Model).
+Shared LangChain embedding model singleton (SRS Section 8 - Embedding Model).
 
-`all-MiniLM-L6-v2` is loaded exactly once during application startup and
-reused for document chunk embeddings, user query embeddings, and semantic
-cache embeddings. No second embedding model is introduced.
+Wraps `HuggingFaceEmbeddings` (langchain-huggingface) around the
+`all-MiniLM-L6-v2` SentenceTransformer model. The instance is loaded
+exactly once and reused for document chunk embeddings, user query
+embeddings, and semantic cache embeddings.
 """
 
 from __future__ import annotations
 
-from typing import List
-
+from langchain_huggingface import HuggingFaceEmbeddings
 from utils.logger import get_logger
 from config import config
 
 logger = get_logger(__name__)
 
-_model = None
+_embeddings: HuggingFaceEmbeddings | None = None
 
 
-def get_embedding_model():
-    """Lazily load and cache the SentenceTransformer embedding model."""
-    global _model
-    if _model is None:
-        from sentence_transformers import SentenceTransformer
-
+def get_embeddings() -> HuggingFaceEmbeddings:
+    """Lazily load and cache the LangChain HuggingFaceEmbeddings wrapper."""
+    global _embeddings
+    if _embeddings is None:
         logger.info("Loading embedding model: %s", config.EMBEDDING_MODEL)
-        _model = SentenceTransformer(config.EMBEDDING_MODEL)
+        _embeddings = HuggingFaceEmbeddings(
+            model_name=config.EMBEDDING_MODEL,
+            model_kwargs={"device": "cpu"},
+            encode_kwargs={"normalize_embeddings": True},
+        )
         logger.info("Embedding model loaded")
-    return _model
+    return _embeddings
 
 
-def embed_texts(texts: List[str]) -> List[List[float]]:
+def embed_texts(texts: list[str]) -> list[list[float]]:
     """Embed a batch of texts, returning plain Python lists of floats."""
-    model = get_embedding_model()
-    vectors = model.encode(texts, show_progress_bar=False, convert_to_numpy=True)
-    return vectors.tolist()
+    return get_embeddings().embed_documents(texts)
 
 
-def embed_text(text: str) -> List[float]:
-    return embed_texts([text])[0]
+def embed_text(text: str) -> list[float]:
+    return get_embeddings().embed_query(text)

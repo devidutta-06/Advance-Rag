@@ -1,7 +1,10 @@
 """
 Document ingestion pipeline orchestrator (SRS Section 5.1 - Document
 Ingestion). Wires together PDF loading -> semantic chunking -> metadata
-generation -> dense (ChromaDB) + sparse (SQLite/FTS5) indexing.
+generation -> dense (ChromaDB) + sparse (SQLite/FTS5) indexing. All
+subcomponents are now LangChain-based (`PyPDFLoader`,
+`SemanticChunker`, `langchain_core.documents.Document`,
+`langchain_chroma.Chroma`).
 """
 
 from __future__ import annotations

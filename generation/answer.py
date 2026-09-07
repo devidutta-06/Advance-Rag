@@ -1,20 +1,23 @@
 """
-Answer generation via Ollama (SRS Section 23 - Answer Generation).
+Answer generation via LCEL (SRS Section 23 - Answer Generation).
 
-The final prompt contains the original user query plus the retrieved
-context. The model is instructed to answer only from the supplied context
-and to cite source document/page metadata where possible.
+Composes a `ChatPromptTemplate` with the shared `ChatOllama` and a
+`StrOutputParser`. The prompt injects the retrieved context (Document
+list) plus the original user query and asks the model to answer only
+from the supplied context, citing source document/page metadata where
+possible.
 """
 
 from __future__ import annotations
 
 from typing import List
 
-from generation.ollama_client import OllamaUnavailableError, chat
-from retrieval.fusion import FusedResult
-from utils.logger import get_logger
+from langchain_core.documents import Document
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import Runnable
 
-logger = get_logger(__name__)
+from generation.ollama_client import get_llm
 
 _SYSTEM_PROMPT = (
     "You are a helpful assistant that answers questions using ONLY the "
@@ -23,43 +26,38 @@ _SYSTEM_PROMPT = (
     "the source page number(s) your answer relies on."
 )
 
+_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        ("system", _SYSTEM_PROMPT),
+        (
+            "human",
+            "Context:\n{context}\n\nQuestion: {question}\n\nAnswer the question using only the context above.",
+        ),
+    ]
+)
 
-def _format_context(chunks: List[FusedResult]) -> str:
+
+def format_context(docs: List[Document]) -> str:
+    """Format a list of LangChain Documents into a single context string
+    for the answer prompt."""
     parts = []
-    for c in chunks:
-        doc = c.metadata.get("document_name", "unknown")
-        page = c.metadata.get("page_number", "?")
-        parts.append(f"[Source: {doc}, page {page}]\n{c.text}")
+    for d in docs:
+        meta = d.metadata or {}
+        doc_name = meta.get("document_name", "unknown")
+        page = meta.get("page_number", "?")
+        parts.append(f"[Source: {doc_name}, page {page}]\n{d.page_content}")
     return "\n\n---\n\n".join(parts)
 
 
-def generate_answer(original_query: str, context_chunks: List[FusedResult]) -> str:
-    logger.info("Ollama generation started")
+_chain: Runnable | None = None
 
-    if not context_chunks:
-        logger.warning("No context available for answer generation")
-        answer = (
-            "I couldn't find relevant information in the document to answer that question."
-        )
-        logger.info("Ollama generation completed")
-        return answer
 
-    context_text = _format_context(context_chunks)
-    prompt = (
-        f"Context:\n{context_text}\n\n"
-        f"Question: {original_query}\n\n"
-        "Answer the question using only the context above."
-    )
+def get_answer_chain() -> Runnable:
+    """Return the LCEL chain: prompt -> LLM -> string parser.
 
-    try:
-        answer = chat(prompt=prompt, system=_SYSTEM_PROMPT, temperature=0.2)
-    except OllamaUnavailableError as exc:
-        logger.error("Answer generation failed: %s", exc)
-        answer = (
-            "Answer generation is currently unavailable because Ollama could not be "
-            "reached. Please ensure Ollama is running and the configured model is "
-            "installed, then try again."
-        )
-
-    logger.info("Ollama generation completed")
-    return answer
+    Input payload: `{"question": str, "context": List[Document]}`.
+    """
+    global _chain
+    if _chain is None:
+        _chain = _PROMPT | get_llm() | StrOutputParser()
+    return _chain
