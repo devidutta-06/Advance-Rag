@@ -9,7 +9,8 @@ Usage:
     python ingest.py                    # Uses config.PDF_PATH
     python ingest.py --pdf data/my.pdf  # Specify custom PDF
     python ingest.py --reindex          # Force rebuild indexes
-    python ingest.py --log-level DEBUG  # Verbose logging
+    python ingest.py --log-level DEBUG  # Verbose app logging
+    python ingest.py --quiet            # Only show warnings/errors
 """
 
 from __future__ import annotations
@@ -42,12 +43,17 @@ def parse_args() -> argparse.Namespace:
         default=config.LOG_LEVEL,
         help="Logging level: DEBUG, INFO, WARNING, ERROR"
     )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress INFO logs (only show warnings/errors on console)"
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    setup_logging(args.log_level)
+    setup_logging(args.log_level, quiet=args.quiet)
     logger = get_logger("ingest")
 
     logger.info("Ingestion started")

@@ -62,8 +62,10 @@ python ingest.py
 Optional flags:
 
 ```bash
-python ingest.py --pdf data/my_document.pdf --log-level DEBUG
-python ingest.py --reindex  # Force rebuild indexes
+python ingest.py --pdf data/my_document.pdf       # Custom PDF path
+python ingest.py --reindex                        # Force rebuild indexes
+python ingest.py --log-level DEBUG                # Verbose app logging
+python ingest.py --quiet                          # Only show warnings/errors
 ```
 
 ### 2. Query the document (interactive)
@@ -75,7 +77,9 @@ python query.py
 Optional flags:
 
 ```bash
-python query.py --pdf data/my_document.pdf --log-level DEBUG
+python query.py --pdf data/my_document.pdf        # Custom PDF path
+python query.py --log-level DEBUG                 # Verbose app logging
+python query.py --quiet                           # Only show warnings/errors
 ```
 
 ### CLI commands (in query.py)

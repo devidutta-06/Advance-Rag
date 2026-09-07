@@ -8,7 +8,8 @@ The document must be ingested first using `python ingest.py`.
 Usage:
     python query.py                    # Uses config.PDF_PATH
     python query.py --pdf data/my.pdf  # Specify custom PDF (must be pre-ingested)
-    python query.py --log-level DEBUG  # Verbose logging
+    python query.py --log-level DEBUG  # Verbose app logging
+    python query.py --quiet            # Only show warnings/errors
 """
 
 from __future__ import annotations
@@ -52,12 +53,17 @@ def parse_args() -> argparse.Namespace:
         default=config.LOG_LEVEL,
         help="Logging level: DEBUG, INFO, WARNING, ERROR"
     )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress INFO logs (only show warnings/errors on console)"
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    setup_logging(args.log_level)
+    setup_logging(args.log_level, quiet=args.quiet)
     logger = get_logger("query")
 
     logger.info("Query mode started")
