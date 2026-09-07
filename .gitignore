@@ -5,7 +5,8 @@ __pycache__/
 venv/
 *.egg-info/
 
-
+context/
 uv.lock
 .python-version
-project.toml
+pyproject.toml
+Software Requirements Specification (SRS).md

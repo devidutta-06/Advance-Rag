@@ -53,27 +53,48 @@ requirements. See the SRS for the full list.
 
 ## Running
 
+### 1. Ingest the document (run once, or when PDF changes)
+
 ```bash
-python main.py
+python ingest.py
 ```
 
 Optional flags:
 
 ```bash
-python main.py --pdf data/my_document.pdf --log-level DEBUG
+python ingest.py --pdf data/my_document.pdf --log-level DEBUG
+python ingest.py --reindex  # Force rebuild indexes
 ```
 
-### CLI commands
+### 2. Query the document (interactive)
+
+```bash
+python query.py
+```
+
+Optional flags:
+
+```bash
+python query.py --pdf data/my_document.pdf --log-level DEBUG
+```
+
+### CLI commands (in query.py)
 
 | Command         | Description                                        |
 |-----------------|-----------------------------------------------------|
 | `/help`         | Show available commands                             |
 | `/exit`         | Exit the application                                |
 | `/clear-cache`  | Delete all semantic cache entries                    |
-| `/reindex`      | Reprocess the configured PDF and rebuild the indexes |
+| `/reindex`      | Reprocess the PDF and rebuild indexes (runs ingestion) |
 
 Anything else typed at the prompt is treated as a natural-language question
 about the document.
+
+### Legacy entry point (deprecated)
+
+```bash
+python main.py  # Shows migration message
+```
 
 ## Configuration
 
@@ -99,8 +120,10 @@ See `config.py` for the full list (`CHROMA_PATH`, `SQLITE_PATH`,
 
 ```text
 advanced-rag/
-├── main.py                  # CLI entry point
-├── pipeline.py               # Query-time orchestration (cache → rewrite → retrieve → fuse → MMR → generate)
+├── ingest.py                 # Data ingestion entry point (run once per PDF)
+├── query.py                  # Interactive query entry point
+├── main.py                   # Legacy entry point (deprecated)
+├── pipeline.py               # Query-time orchestration
 ├── config.py                 # Centralized configuration
 ├── requirements.txt
 ├── README.md
@@ -164,6 +187,9 @@ metadata generation → indexed in both ChromaDB (dense) and SQLite/FTS5
 
 
 # > Improvements
+0. Move to framework like Langchain 
 1. main.py contain both data preparation and RAG so the DB is re indexing again and again. Separate the data preparation (embeding and storing ) which need to run once or when new pdf needed
-2. 
-3. LOG is showing very deatiled -Https - all .. reduce it makeit more compact yet effective same for terminal 
+2. LOG is showing very deatiled -Https - all .. reduce it makeit more compact yet effective same for terminal 
+3. Implement the Quadrant instade of ChromaDB
+4. Improve answar with citations (Keyword search isnot working)
+5. Give a report on re ranking algorithms 
