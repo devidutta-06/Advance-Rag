@@ -104,6 +104,28 @@ def clear_document_collection() -> None:
             pass
 
 
+def clear_document(document_path: str) -> None:
+    """Delete all vectors belonging to one document, without wiping the
+    whole collection.
+
+    Chroma's `collection.add()` silently skips re-adding an id that
+    already exists — it does NOT overwrite it. That means re-running
+    ingestion on the same PDF without `--reindex` leaves every existing
+    chunk's embedding untouched (e.g. still reflecting pre-fix, fused
+    extraction text), even though the new chunk objects were computed
+    correctly. Call this before indexing so re-ingesting the same file is
+    always safe, independent of the `--reindex` flag.
+    """
+    vs = _get_vectorstore()
+    try:
+        vs._collection.delete(where={"document_path": document_path})
+        logger.info("Cleared existing dense vectors for document: %s", document_path)
+    except Exception as exc:
+        logger.warning(
+            "Could not clear existing dense vectors for %s: %s", document_path, exc
+        )
+
+
 def dense_search(query: str, top_k: Optional[int] = None) -> List[DenseResult]:
     k = top_k or config.DENSE_TOP_K
     vs = _get_vectorstore()

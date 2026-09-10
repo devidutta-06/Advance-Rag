@@ -4,6 +4,8 @@ __pycache__/
 .venv/
 venv/
 *.egg-info/
+.opencode/
+opencode.json
 src/
 context/
 uv.lock

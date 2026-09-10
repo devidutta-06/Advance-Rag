@@ -14,6 +14,7 @@ dependencies = [
     "ollama>=0.3.0",
     "pypdf>=4.0.0",
     "sentence-transformers>=3.0.0",
+    "simsimd>=6.5.16",
 ]
 
 [project.scripts]

@@ -72,6 +72,23 @@ def clear_sparse_index() -> None:
     conn.commit()
 
 
+def clear_document(document_path: str) -> None:
+    """Delete all sparse rows belonging to one document, without wiping
+    the whole index.
+
+    FTS5 has no uniqueness constraint on `chunk_id` — re-running
+    ingestion on the same PDF without `--reindex` just appends new rows
+    on top of the old ones, so the same chunk_id can end up duplicated
+    (with different text, if chunking changed between runs). Call this
+    before indexing so re-ingesting the same file is always safe,
+    independent of the `--reindex` flag.
+    """
+    conn = _get_connection()
+    conn.execute("DELETE FROM sparse_index WHERE document_path = ?;", (document_path,))
+    conn.commit()
+    logger.info("Cleared existing sparse rows for document: %s", document_path)
+
+
 def index_chunks(chunks: List[Chunk]) -> None:
     if not chunks:
         logger.warning("No chunks to index in SQLite/FTS5")

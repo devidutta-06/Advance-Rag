@@ -11,6 +11,7 @@ Reliability).
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from langchain_core.output_parsers import StrOutputParser
@@ -24,9 +25,20 @@ logger = get_logger(__name__)
 
 _SYSTEM_PROMPT = (
     "You rewrite short, ambiguous, or poorly formulated user questions into "
-    "clear, specific, standalone questions suitable for searching a document. "
-    "Preserve the original intent. Respond with ONLY the rewritten question, "
-    "no explanation, no quotes."
+    "clear, specific, standalone questions suitable for searching a document "
+    "with a semantic search engine.\n\n"
+    "You do not know what the document is about. Follow these rules strictly:\n"
+    "1. Fix only grammar, spelling, and sentence structure.\n"
+    "2. Keep every acronym, abbreviation, and named entity EXACTLY as the user "
+    "wrote it (e.g. 'VLMS', 'API', 'RAG'). Never expand, translate, or guess "
+    "what an acronym stands for — you do not have enough context to know, and "
+    "a wrong guess will break the search. If the user wrote 'VLMS', the "
+    "rewritten question must still contain 'VLMS' unchanged.\n"
+    "3. Do not add facts, examples, categories, or assumptions that the user "
+    "did not state. Do not narrow or broaden the topic.\n"
+    "4. If the query is already clear, return it unchanged (only fixing typos).\n"
+    "5. Respond with ONLY the rewritten question — no explanation, no quotes, "
+    "no preamble."
 )
 
 _PROMPT = ChatPromptTemplate.from_messages(
@@ -43,6 +55,52 @@ class QueryRewriteError(Exception):
 
 def _strip_quotes(text: str) -> str:
     return text.strip().strip('"').strip()
+
+
+_PAREN_GLOSS_RE = re.compile(r"\b([A-Za-z]{2,8})\s*\(([^()]{4,60})\)")
+
+
+def _has_invented_gloss(original_query: str, rewritten: str) -> str | None:
+    """Detect 'ACRONYM (some explanation)' patterns the rewrite introduced
+    that were not already present in the original query.
+
+    The acronym-drop guard only checks that a token still appears in the
+    rewrite — it doesn't catch the LLM keeping the acronym AND bolting on
+    its own guessed expansion, e.g. 'VLMS (Vision Lab Markup System)'.
+    That's just as damaging to retrieval (it pollutes the embedded query
+    with fabricated terms) even though the acronym itself survives. Users
+    asking short queries essentially never include parenthetical
+    explanations themselves, so any gloss text not already present in the
+    original query is presumed invented. Returns the offending match text
+    if found, else None.
+    """
+    original_lower = original_query.lower()
+    for match in _PAREN_GLOSS_RE.finditer(rewritten):
+        gloss = match.group(2)
+        if gloss.lower() not in original_lower:
+            return match.group(0)
+    return None
+
+
+def _acronym_tokens(text: str) -> set[str]:
+    """Extract likely acronyms/technical tokens from a query (e.g. 'VLMS', 'API').
+
+    Zero-config safeguard: no domain description or embedding model needed.
+    Flags a word as acronym-like if, stripped of punctuation, it is 2+
+    letters and at least half of its letters are uppercase (covers 'VLMS',
+    'VLMs', 'API', etc.). Used to make sure the LLM's rewrite didn't drop
+    or silently replace it with its own expansion.
+    """
+    tokens = set()
+    for raw in text.split():
+        word = raw.strip(".,?!:;\"'()[]")
+        letters = [c for c in word if c.isalpha()]
+        if len(letters) < 2:
+            continue
+        upper_ratio = sum(c.isupper() for c in letters) / len(letters)
+        if upper_ratio >= 0.5:
+            tokens.add(word.upper())
+    return tokens
 
 
 @dataclass
@@ -77,13 +135,33 @@ def rewrite_query(original_query: str) -> RewriteResult:
         rewritten = (rewritten or "").strip()
         if not rewritten:
             raise QueryRewriteError("Empty rewrite response")
+
+        original_acronyms = _acronym_tokens(original_query)
+        rewritten_acronyms = _acronym_tokens(rewritten)
+        dropped = original_acronyms - rewritten_acronyms
+        if dropped:
+            raise QueryRewriteError(
+                f"Rewrite dropped/replaced acronym token(s) {dropped}: "
+                f"{original_query!r} -> {rewritten!r}"
+            )
+
+        invented_gloss = _has_invented_gloss(original_query, rewritten)
+        if invented_gloss:
+            raise QueryRewriteError(
+                f"Rewrite invented an acronym expansion {invented_gloss!r}: "
+                f"{original_query!r} -> {rewritten!r}"
+            )
+
         logger.info("Rewritten query: %s", rewritten)
         return RewriteResult(
             original_query=original_query,
             rewritten_query=rewritten,
             used_fallback=False,
         )
-    except QueryRewriteError as exc:
+    except Exception as exc:
+        # Broad on purpose: connection errors, timeouts, or any other
+        # LangChain/Ollama runtime failure must still fall back to the
+        # original query rather than crashing the RAG pipeline (NFR-06).
         logger.warning(
             "Query rewriting failed, falling back to original query: %s", exc
         )
